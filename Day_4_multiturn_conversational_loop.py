@@ -49,21 +49,16 @@ def count_message_tokens(messages, encoder):
 class BaseChat:
     """Shared Groq client, API retry logic, and safe turn storage."""
 
-    def __init__(
-        self,
-        client,
-        model=DEFAULT_MODEL,
-        max_completion_tokens=DEFAULT_MAX_COMPLETION_TOKENS,
-    ):
+    def __init__(self, client, model=DEFAULT_MODEL, max_completion_tokens=DEFAULT_MAX_COMPLETION_TOKENS):
         self.client = client
         self.model = model
         self.max_completion_tokens = max_completion_tokens
         self.system_content = "You are a helpful assistant."
-        self.history = []
+        self.history = [] # to store the conversation history as a list of messages
         self.encoder = get_encoder()
 
     def clear_history(self):
-        self.history = []
+        self.history = [] # clear based on clear command
 
     def count_tokens(self, messages):
         return count_message_tokens(messages, self.encoder)
@@ -75,7 +70,11 @@ class BaseChat:
         return {"role": "system", "content": content}
 
     def _call_api(self, messages):
-        """Call Groq with exponential backoff on API/rate-limit errors."""
+        """
+        Call Groq with exponential backoff on API/rate-limit errors.
+        Backoff with exponential delay: 1s, 2s, 4s. Raise on final failure.
+        """
+
         wait_seconds = 1
         last_error = None
 
@@ -105,15 +104,27 @@ class BaseChat:
 
     def _save_turn(self, user_input, assistant_msg):
         """Store a complete user/assistant pair only after a successful API call."""
+
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": assistant_msg})
 
     def chat(self, user_input):
+        """
+        Abstract method to be implemented by subclasses.
+
+        Each subclass defines its own memory management strategy (sliding window,
+        token-based truncation, or summarization).
+
+        It is also an example of polymorphism,
+        where the same method name can have different implementations in different subclasses.
+
+        """
+
         raise NotImplementedError
 
 
 class SlidingWindowChat(BaseChat):
-    """Keep only the last N user/assistant pairs in memory."""
+    """Keep only the last N user/assistant conversation pairs in memory."""
 
     def __init__(self, client, max_turns=10, **kwargs):
         super().__init__(client, **kwargs)
