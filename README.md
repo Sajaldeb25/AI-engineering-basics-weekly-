@@ -1,6 +1,6 @@
 # AI API Learning Project
 
-A day-by-day Python project for learning AI APIs — from first API calls and parameter tuning, to tokens, streaming, stop sequences, and structured JSON with Pydantic validation.
+A day-by-day Python project for learning AI APIs — from first API calls and parameter tuning, to tokens, streaming, stop sequences, structured JSON with Pydantic validation, multi-turn chat memory strategies, and chain-of-thought prompting.
 
 **Primary provider:** Groq (free tier) · **Model:** `llama-3.3-70b-versatile`
 
@@ -18,6 +18,8 @@ day01/
 ├── Day_2_stop_sequence.py               # Stop sequence experiments
 ├── Day_3_json_formatted_response.py     # Structured JSON output from Groq
 ├── Day_3_pedantic_validation_and_retry.py # Pydantic validation with retries
+├── Day_4_multiturn_conversational_loop.py # Multi-turn chat with memory strategies
+├── Day_5_chain_of_thought_(COT).py      # Chain-of-thought prompting experiment
 ├── requirements.txt
 ├── .env                                 # API keys (create locally — not committed)
 ├── .gitignore
@@ -63,9 +65,9 @@ pip install -r requirements.txt
 
 | Package         | Purpose                              | Used from   |
 |-----------------|--------------------------------------|-------------|
-| `groq`          | Groq API client (primary)            | Day 1–3     |
+| `groq`          | Groq API client (primary)            | Day 1–5     |
 | `python-dotenv` | Load `.env` variables                | All days    |
-| `tiktoken`      | Token counting                       | Day 2       |
+| `tiktoken`      | Token counting                       | Day 2, 4    |
 | `pydantic`      | Schema validation                    | Day 3       |
 | `openai`        | OpenAI API client                    | Day 1       |
 | `anthropic`     | Anthropic (Claude) API client        | Day 1       |
@@ -77,7 +79,7 @@ pip install -r requirements.txt
 **Never commit this file.**
 
 ```env
-# Free-tier (recommended — required for Day 1–3 Groq scripts)
+# Free-tier (recommended — required for Day 1–5 Groq scripts)
 GORQ_API_KEY=gsk-your-groq-key-here
 
 # Optional — paid or quota-limited
@@ -340,6 +342,89 @@ Groq API → extract_json() → Person (Pydantic) → success or retry with erro
 
 ---
 
+# Day 4 — Multi-turn Conversational Loop
+
+**Goals:** Build an interactive chat agent with context management — keep conversations going without blowing the token budget.
+
+| File | Command |
+|------|---------|
+| Multi-turn chat | `python3 Day_4_multiturn_conversational_loop.py [strategy]` |
+
+**Strategies** (pass as first argument; default is `token`):
+
+| Strategy  | Class               | How memory works                                      |
+|-----------|---------------------|-------------------------------------------------------|
+| `token`   | `TokenManagedChat`  | Drop oldest messages when context exceeds token budget |
+| `sliding` | `SlidingWindowChat` | Keep only the last N user/assistant turn pairs        |
+| `summary` | `SummarizingChat`   | Compress old history into a summary when threshold hit |
+
+```bash
+python3 Day_4_multiturn_conversational_loop.py token
+python3 Day_4_multiturn_conversational_loop.py sliding
+python3 Day_4_multiturn_conversational_loop.py summary
+```
+
+**CLI commands during chat:** `exit` · `history` · `clear`
+
+**Architecture:**
+
+```
+BaseChat          — shared Groq client, API retry (1s → 2s → 4s), turn storage
+├── SlidingWindowChat
+├── TokenManagedChat
+└── SummarizingChat
+ChatApp           — CLI loop; picks strategy via argv
+```
+
+**Key concepts:**
+
+- `_save_turn()` — only stores user/assistant pairs after a successful API call
+- `BaseChat.chat()` — abstract method (`NotImplementedError`); each strategy implements its own memory logic (polymorphism)
+- Token budget uses `tiktoken` (`cl100k_base`) with a character-based fallback
+
+---
+
+# Day 5 — Chain-of-Thought (CoT) Prompting
+
+**Goals:** Compare two reasoning prompt styles — natural step-by-step instructions vs structured XML tags — and analyze token usage and reasoning quality.
+
+| File | Command |
+|------|---------|
+| CoT experiment | `python3 Day_5_chain_of_thought_(COT).py` |
+
+```bash
+# Default 6 math/logic questions
+python3 Day_5_chain_of_thought_(COT).py
+
+# Single custom question
+python3 Day_5_chain_of_thought_(COT).py -q "What is 2+2?"
+
+# Custom output file and token limit
+python3 Day_5_chain_of_thought_(COT).py --max-tokens 500 -o my_results.json
+```
+
+| Flag | Description |
+|------|-------------|
+| `-q`, `--question` | Question to run (repeatable; uses defaults if omitted) |
+| `--max-tokens` | Max completion tokens per API call (default: 1000) |
+| `-o`, `--output` | JSON results path (default: `cot_results.json`) |
+
+**Two prompting styles per question:**
+
+| Style | Approach |
+|-------|----------|
+| Step-by-step | System prompt asks the model to solve problems step by step |
+| XML tags | Model must use `<thinking>` for reasoning and `<answer>` for the final result |
+
+**Classes:**
+
+- `CoTExperiment` — runs both styles, API retry with backoff, per-question error handling, saves JSON
+- `CoTAnalyzer` — extracts XML answers, counts reasoning steps, prints token/reasoning comparison report
+
+**Output:** Console report plus JSON file with full answers and token counts per question.
+
+---
+
 ## Suggested Learning Path
 
 ```
@@ -356,6 +441,12 @@ Day 2  →  Tokens, streaming, and output control
 Day 3  →  Structured data for agents
          Day_3_json_formatted_response.py
          Day_3_pedantic_validation_and_retry.py
+
+Day 4  →  Multi-turn chat & memory management
+         Day_4_multiturn_conversational_loop.py
+
+Day 5  →  Chain-of-thought prompting
+         Day_5_chain_of_thought_(COT).py
 ```
 
 **Run all Groq scripts in order:**
@@ -368,6 +459,8 @@ python3 Day_2_gorq_steaming.py
 python3 Day_2_stop_sequence.py
 python3 Day_3_json_formatted_response.py
 python3 Day_3_pedantic_validation_and_retry.py
+python3 Day_4_multiturn_conversational_loop.py token    # interactive — type exit to quit
+python3 Day_5_chain_of_thought_(COT).py
 ```
 
 ---
@@ -408,6 +501,10 @@ Paid credits required. Use Groq scripts for free learning.
 ### Gemini `429 RESOURCE_EXHAUSTED`
 
 Free quota used up. Wait for reset or use Groq.
+
+### Day 5 writes `cot_results.json`
+
+Generated by default when running the CoT experiment. Add to `.gitignore` if you do not want to commit experiment output.
 
 ---
 
