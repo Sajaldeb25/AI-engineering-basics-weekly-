@@ -1,17 +1,65 @@
 import os
-
 import time
+
 from dotenv import load_dotenv
-from groq import Groq
+from groq import APIStatusError, Groq
 from typing import List
 
 load_dotenv()
-client = Groq(api_key=os.getenv("GORQ_API_KEY"))
+
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
+MAX_API_RETRIES = 3
+
+
+def get_groq_api_key():
+    return os.getenv("GROQ_API_KEY") or os.getenv("GORQ_API_KEY")
+
+
+def create_groq_client():
+    api_key = get_groq_api_key()
+    if not api_key:
+        raise SystemExit(
+            "❌ ERROR: GROQ_API_KEY (or GORQ_API_KEY) not found in .env"
+        )
+    return Groq(api_key=api_key)
+
 
 class CoTExperiment:
-    def __init__(self):
-        self.model = "llama-3.3-70b-versatile"
+    def __init__(self, client=None):
+        self.client = client or create_groq_client()
+        self.model = DEFAULT_MODEL
         self.results = []
+
+    def _call_api(self, messages, max_tokens):
+        """Call Groq with exponential backoff on rate-limit/API errors."""
+        wait_seconds = 1
+        last_error = None
+
+        for attempt in range(MAX_API_RETRIES):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=max_tokens,
+                )
+                content = response.choices[0].message.content
+                tokens = response.usage.total_tokens if response.usage else 0
+                return content or "", tokens
+            except APIStatusError as error:
+                last_error = error
+                if attempt < MAX_API_RETRIES - 1:
+                    print(f"⚠️  API error, retrying in {wait_seconds}s...")
+                    time.sleep(wait_seconds)
+                    wait_seconds *= 2
+                else:
+                    raise
+            except Exception:
+                raise
+
+        if last_error:
+            raise last_error
+        return "", 0
     
     def run_experiment(self, questions: List[str], max_tokens=1000):
         """Run both prompting styles on each question"""
@@ -46,21 +94,13 @@ class CoTExperiment:
             {"role": "user", "content": f"Solve the following problem step by step:\n\n{question}"}
         ]
         
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=max_tokens
-        )
-        
-        answer = response.choices[0].message.content
-        tokens = response.usage.total_tokens
-        
+        answer, tokens = self._call_api(messages, max_tokens)
+
         print(f"Response:\n{answer}\n")
         print(f"Tokens used: {tokens}")
-        
+
         return {"answer": answer, "tokens": tokens}
-    
+
     def prompt_xml_tags(self, question, max_tokens):
         """Style 2: Use XML tags <thinking> and <answer>"""
         system = """
@@ -77,19 +117,11 @@ class CoTExperiment:
             {"role": "user", "content": f"Solve this problem:\n\n{question}"}
         ]
         
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=max_tokens
-        )
-        
-        answer = response.choices[0].message.content
-        tokens = response.usage.total_tokens
-        
+        answer, tokens = self._call_api(messages, max_tokens)
+
         print(f"Response:\n{answer}\n")
         print(f"Tokens used: {tokens}")
-        
+
         return {"answer": answer, "tokens": tokens}
 
 
