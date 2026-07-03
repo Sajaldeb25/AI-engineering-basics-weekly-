@@ -15,9 +15,9 @@ from groq import APIStatusError, Groq
 load_dotenv()
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_MAX_CONTEXT_TOKENS = 8000
-DEFAULT_SUMMARY_THRESHOLD = 6000
-DEFAULT_MAX_COMPLETION_TOKENS = 200
+DEFAULT_MAX_CONTEXT_TOKENS = 1000
+DEFAULT_SUMMARY_THRESHOLD = 700
+DEFAULT_MAX_COMPLETION_TOKENS = 600
 MESSAGE_OVERHEAD_TOKENS = 4
 
 
@@ -92,7 +92,7 @@ class BaseChat:
                 if attempt < 2:
                     print(f"⚠️  API error, retrying in {wait_seconds}s...")
                     time.sleep(wait_seconds)
-                    wait_seconds *= 2
+                    wait_seconds *= 2 # exponential backoff
                 else:
                     raise
             except Exception:
@@ -103,7 +103,13 @@ class BaseChat:
         return ""
 
     def _save_turn(self, user_input, assistant_msg):
-        """Store a complete user/assistant pair only after a successful API call."""
+        
+        """
+        Store a complete user/assistant pair only after a successful API call.
+        Calling from summarizing chat, 
+        token managed chat, and 
+        sliding window chat.
+        """
 
         self.history.append({"role": "user", "content": user_input})
         self.history.append({"role": "assistant", "content": assistant_msg})
@@ -136,14 +142,21 @@ class SlidingWindowChat(BaseChat):
             self.history = self.history[-max_messages:]
 
     def chat(self, user_input):
+        """
+        Inherit from BaseChat class and implement the chat method.
+        This is the main method that will be called to start the conversation. 
+        """
+
         messages = self._system_message(), *self.history, {
             "role": "user",
             "content": user_input,
         }
         messages = list(messages)
 
-        assistant_msg = self._call_api(messages)
-        self._save_turn(user_input, assistant_msg)
+        print(f"🔍 Messages inside sliding window chat: {messages}")
+
+        assistant_msg = self._call_api(messages) # defined in Base class
+        self._save_turn(user_input, assistant_msg) # defined in Base class
         self._trim_history()
         return assistant_msg
 
@@ -156,11 +169,30 @@ class TokenManagedChat(BaseChat):
         self.max_context_tokens = max_context_tokens
 
     def _truncate_messages(self, messages):
+
+        """
+        Budget: 8000 tokens
+        Current: 9500 tokens
+        - pop oldest user message
+        - pop oldest assistant message
+        - repeat until ≤ 8000
+        """
+
+
         system_msg = messages[0]
         rolling = messages[1:]
 
+        print(f"🔍 Messages inside token managed chat: {messages}\n")
+        print(f"🔍 System message: {system_msg}\n")
+        print(f"🔍 Rolling: {rolling}\n")
+        print(f"🔍 Max context tokens: {self.max_context_tokens}\n")
+        print(f"🔍 Count tokens: {self.count_tokens([system_msg, *rolling])}\n")
+
         while rolling and self.count_tokens([system_msg, *rolling]) > self.max_context_tokens:
             rolling.pop(0)
+
+            print(f"🔍 Truncated messages inside token managed chat: {rolling}\n")  
+            print(f"🔍 Now total tokens are: {self.count_tokens([system_msg, *rolling])}\n")
 
         return [system_msg, *rolling]
 
@@ -172,8 +204,8 @@ class TokenManagedChat(BaseChat):
         ]
         messages = self._truncate_messages(messages)
 
-        assistant_msg = self._call_api(messages)
-        self._save_turn(user_input, assistant_msg)
+        assistant_msg = self._call_api(messages) # defined in Base class
+        self._save_turn(user_input, assistant_msg) # defined in Base class
         return assistant_msg
 
 
@@ -209,6 +241,8 @@ class SummarizingChat(BaseChat):
             "Keep key facts and context needed for future replies.\n\n"
             f"Conversation:\n{self._format_history()}"
         )
+
+        print(f"🔍 Summary prompt: {summary_prompt}")
 
         summary_text = self._call_api([{"role": "user", "content": summary_prompt}])
         self.summary = summary_text.strip()
@@ -314,3 +348,10 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     ChatApp(strategy=strategy).run()
+
+    """
+    Your command should be like this:
+    python Day_4_multiturn_conversational_loop.py token
+    python Day_4_multiturn_conversational_loop.py sliding
+    python Day_4_multiturn_conversational_loop.py summary
+    """
