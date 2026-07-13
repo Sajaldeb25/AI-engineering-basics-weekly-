@@ -10,6 +10,25 @@ Run:
     python3 Day_8_tools_as_Json_schemas.py --live    # optional live Groq demo
 """
 
+
+""" 
+---- Why we need tools ----
+
+-Without tools:
+You: “What’s the weather in Paris and what is 15 × 7?”
+Model: “It’s probably around 18°C and sunny… 15 times 7 is 105.”
+Maybe right. Maybe wrong. It has no real connection to weather or a calculator.
+
+-With tools:
+
+You: same question
+Model: “I need get_weather(city=Paris) and calculator(15, 7, multiply).”
+Your code: actually calls weather API → 18°C, sunny; runs math → 105
+Model: “Paris is 18°C and sunny. 15 × 7 = 105.”
+
+Now the answer uses real data and real computation, not guesses.
+"""
+
 import argparse
 import json
 from typing import Any
@@ -86,7 +105,7 @@ TOOLS = [
 
 
 # ---------------------------------------------------------------------------
-# 2. Stub implementations (your code runs these — not the model)
+# 2. Stub implementations (code will run these — not the model)
 # ---------------------------------------------------------------------------
 
 def calculator_impl(a: float, b: float, operation: str) -> float:
