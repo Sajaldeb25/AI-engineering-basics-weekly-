@@ -143,7 +143,10 @@ def search_web_impl(query: str, num_results: int = 3) -> list[dict]:
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
-    """Dispatch a tool call to the matching implementation."""
+    """Handler for tool calls. 
+    This is where the code will run the tool calls.
+    """
+
     if name == "calculator":
         return calculator_impl(arguments["a"], arguments["b"], arguments["operation"])
     if name == "get_weather":
@@ -413,13 +416,19 @@ if __name__ == "__main__":
     parser.add_argument("--live", action="store_true", help="Run live Groq tool-use demo")
     args = parser.parse_args()
 
-    print_manual_trace()
+    # Print the manual trace
+    # This is a manual trace of the tool-use turn.
+    print_manual_trace() # 4 steps. 1 request, 1 assistant tool_use block, 2 tool_results, 1 final response.
+
+    
 
     # Verify step 2 → step 3 with our stub implementations
+    # This is where the code will run the tool calls.
     print("\n" + "=" * 72)
     print("EXECUTING STEP 2 → STEP 3 (stub implementations)")
     print("=" * 72)
     computed = run_tool_loop_from_assistant(MANUAL_TRACE["step_2_assistant_tool_use"])
+    # This is where the code will run the tool calls.
     for item in computed:
         print(_pretty(item))
 
