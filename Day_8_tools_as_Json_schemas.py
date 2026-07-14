@@ -1,40 +1,36 @@
 """
 Day 8 — Tools as JSON Schemas
 
-Define tools the model may call, then trace one full turn by hand:
+Define tools the model may call, then run a tool-use turn:
 
-    request → tool_use block → tool_result → final response
+    request → tool_use → tool_result → final response
+
+Why tools?
+  Without tools, the model guesses (weather, math, search).
+  With tools, the model picks a function; YOUR code runs it; the model
+  answers using real results.
 
 Run:
-    python3 Day_8_tools_as_Json_schemas.py           # print manual trace
-    python3 Day_8_tools_as_Json_schemas.py --live    # optional live Groq demo
-"""
-
-
-""" 
----- Why we need tools ----
-
--Without tools:
-You: “What’s the weather in Paris and what is 15 × 7?”
-Model: “It’s probably around 18°C and sunny… 15 times 7 is 105.”
-Maybe right. Maybe wrong. It has no real connection to weather or a calculator.
-
--With tools:
-
-You: same question
-Model: “I need get_weather(city=Paris) and calculator(15, 7, multiply).”
-Your code: actually calls weather API → 18°C, sunny; runs math → 105
-Model: “Paris is 18°C and sunny. 15 × 7 = 105.”
-
-Now the answer uses real data and real computation, not guesses.
+    python3 Day_8_tools_as_Json_schemas.py
 """
 
 import argparse
 import json
+import os
+import time
 from typing import Any
 
+from dotenv import load_dotenv
+from groq import APIStatusError, Groq
+
+load_dotenv()
+
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
+MAX_ROUNDS = 5
+MAX_API_RETRIES = 3
+
 # ---------------------------------------------------------------------------
-# 1. Three tools defined as JSON Schema (Groq / OpenAI-compatible format)
+# 1. Tool schemas (menu the model can choose from)
 # ---------------------------------------------------------------------------
 
 TOOLS = [
@@ -105,7 +101,7 @@ TOOLS = [
 
 
 # ---------------------------------------------------------------------------
-# 2. Stub implementations (code will run these — not the model)
+# 2. Stub implementations (YOUR code runs these — not the model)
 # ---------------------------------------------------------------------------
 
 def calculator_impl(a: float, b: float, operation: str) -> float:
@@ -123,7 +119,7 @@ def calculator_impl(a: float, b: float, operation: str) -> float:
 
 
 def get_weather_impl(city: str, units: str = "metric") -> dict:
-    # Mock data — real app would call a weather API
+    # Mock data — a real app would call a weather API
     temp = 18 if units == "metric" else 64
     unit_label = "°C" if units == "metric" else "°F"
     return {
@@ -135,7 +131,7 @@ def get_weather_impl(city: str, units: str = "metric") -> dict:
 
 
 def search_web_impl(query: str, num_results: int = 3) -> list[dict]:
-    # Mock data — real app would call a search API
+    # Mock data — a real app would call a search API
     return [
         {"title": f"Result {i + 1} for '{query}'", "url": f"https://example.com/{i + 1}"}
         for i in range(num_results)
@@ -143,10 +139,7 @@ def search_web_impl(query: str, num_results: int = 3) -> list[dict]:
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
-    """Handler for tool calls. 
-    This is where the code will run the tool calls.
-    """
-
+    """Run the matching stub function for a tool call."""
     if name == "calculator":
         return calculator_impl(arguments["a"], arguments["b"], arguments["operation"])
     if name == "get_weather":
@@ -156,281 +149,138 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
     raise ValueError(f"Unknown tool: {name}")
 
 
+def get_groq_api_key():
+    return os.getenv("GROQ_API_KEY") or os.getenv("GORQ_API_KEY")
+
+
 # ---------------------------------------------------------------------------
-# 3. Manual trace — one full tool-use turn (trace this on paper)
+# 3. Live multi-round tool-use loop
 # ---------------------------------------------------------------------------
-#
-# Scenario: user asks for weather in Paris AND 15 × 7.
-# Model picks calculator first (could also call get_weather in parallel).
-#
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ STEP 1 — REQUEST (you → API)                                            │
-# │   messages: [user question]                                             │
-# │   tools:    TOOLS (schemas above)                                         │
-# └─────────────────────────────────────────────────────────────────────────┘
-#                                    ↓
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ STEP 2 — ASSISTANT tool_use block (API → you)                           │
-# │   role: assistant                                                         │
-# │   tool_calls: [{ id, type:"function", function:{ name, arguments } }]   │
-# │   finish_reason: "tool_calls"                                            │
-# └─────────────────────────────────────────────────────────────────────────┘
-#                                    ↓
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ STEP 3 — tool_result (you → API)                                        │
-# │   role: tool                                                              │
-# │   tool_call_id: matches the id from step 2                                │
-# │   content: JSON string or plain text from execute_tool()                  │
-# └─────────────────────────────────────────────────────────────────────────┘
-#                                    ↓
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ STEP 4 — FINAL RESPONSE (API → you)                                     │
-# │   Second request sends full history: user + assistant(tool_calls) + tool │
-# │   Assistant returns natural-language answer using tool result.            │
-# └─────────────────────────────────────────────────────────────────────────┘
 
-MANUAL_TRACE = {
-    "step_1_request": {
-        "messages": [
-            {
-                "role": "user",
-                "content": "What's the weather in Paris, and what is 15 times 7?",
-            }
-        ],
-        "tools": TOOLS,
-        "tool_choice": "auto",
-    },
-    "step_2_assistant_tool_use": {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": "call_weather_001",
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": json.dumps({"city": "Paris", "units": "metric"}),
-                },
-            },
-            {
-                "id": "call_calc_002",
-                "type": "function",
-                "function": {
-                    "name": "calculator",
-                    "arguments": json.dumps({"a": 15, "b": 7, "operation": "multiply"}),
-                },
-            },
-        ],
-        "finish_reason": "tool_calls",
-    },
-    "step_3_tool_results": [
-        {
-            "role": "tool",
-            "tool_call_id": "call_weather_001",
-            "content": json.dumps(
-                {"city": "Paris", "temperature": 18, "unit": "°C", "condition": "sunny"}
-            ),
-        },
-        {
-            "role": "tool",
-            "tool_call_id": "call_calc_002",
-            "content": "105",
-        },
-    ],
-    "step_4_follow_up_request": {
-        "messages": [
-            {
-                "role": "user",
-                "content": "What's the weather in Paris, and what is 15 times 7?",
-            },
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call_weather_001",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": json.dumps({"city": "Paris", "units": "metric"}),
-                        },
-                    },
-                    {
-                        "id": "call_calc_002",
-                        "type": "function",
-                        "function": {
-                            "name": "calculator",
-                            "arguments": json.dumps({"a": 15, "b": 7, "operation": "multiply"}),
-                        },
-                    },
-                ],
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_weather_001",
-                "content": json.dumps(
-                    {"city": "Paris", "temperature": 18, "unit": "°C", "condition": "sunny"}
-                ),
-            },
-            {
-                "role": "tool",
-                "tool_call_id": "call_calc_002",
-                "content": "105",
-            },
-        ],
-        "tools": TOOLS,
-    },
-    "step_4_final_response": {
-        "role": "assistant",
-        "content": (
-            "In Paris, it's currently 18°C and sunny. "
-            "Also, 15 times 7 equals 105."
-        ),
-        "finish_reason": "stop",
-    },
-}
-
-
-def _pretty(data: Any) -> str:
-    return json.dumps(data, indent=2, ensure_ascii=False)
-
-
-def print_manual_trace():
-    """Print the full request → tool_use → tool_result → response flow."""
-    print("=" * 72)
-    print("DAY 8 — MANUAL TOOL-USE TRACE (trace this on paper)")
-    print("=" * 72)
-
-    print("\n📤 STEP 1 — REQUEST (you send to API)")
-    print(_pretty(MANUAL_TRACE["step_1_request"]))
-
-    print("\n📥 STEP 2 — ASSISTANT tool_use block (API returns)")
-    print(_pretty(MANUAL_TRACE["step_2_assistant_tool_use"]))
-
-    print("\n🔧 STEP 3 — tool_result (you execute tools, send back)")
-    for result in MANUAL_TRACE["step_3_tool_results"]:
-        print(_pretty(result))
-
-    print("\n📤 STEP 4a — FOLLOW-UP REQUEST (full message history)")
-    print(_pretty(MANUAL_TRACE["step_4_follow_up_request"]))
-
-    print("\n📥 STEP 4b — FINAL RESPONSE (assistant answers in plain text)")
-    print(_pretty(MANUAL_TRACE["step_4_final_response"]))
-
-    print("\n" + "-" * 72)
-    print("KEY RULES")
-    print("-" * 72)
-    print("• tool_call_id in tool_result MUST match id from tool_calls")
-    print("• arguments is a JSON string — parse before calling your function")
-    print("• You run execute_tool(); the model only picks name + arguments")
-    print("• Second API call includes user + assistant(tool_calls) + tool messages")
-
-
-def run_tool_loop_from_assistant(assistant_message: dict) -> list[dict]:
+def run_live_demo(max_rounds: int = MAX_ROUNDS):
     """
-    Pseudocode from step 2 → step 3: execute each tool_call and build tool results.
+    Call Groq with tools. If the model returns tool_calls, execute them,
+    append results, and call again until it returns a final text answer.
     """
-    results = []
-    for tool_call in assistant_message.get("tool_calls", []):
-        if tool_call["type"] != "function":
-            continue
-
-        name = tool_call["function"]["name"]
-        arguments = json.loads(tool_call["function"]["arguments"])
-        output = execute_tool(name, arguments)
-
-        results.append({
-            "role": "tool",
-            "tool_call_id": tool_call["id"],
-            "content": json.dumps(output) if isinstance(output, (dict, list)) else str(output),
-        })
-
-    return results
-
-
-def run_live_demo():
-    """Optional: run a real tool-use turn against Groq."""
-    import os
-
-    from dotenv import load_dotenv
-    from groq import Groq
-
-    load_dotenv()
-    api_key = os.getenv("GROQ_API_KEY") or os.getenv("GORQ_API_KEY")
+    api_key = get_groq_api_key()
     if not api_key:
         raise SystemExit("❌ GROQ_API_KEY (or GORQ_API_KEY) not found in .env")
 
     client = Groq(api_key=api_key)
-    user_message = "What's the weather in Paris, and what is 15 times 7?"
+    user_message = (
+        "What's the weather in Paris, and what is 15 times 7? "
+        "Also, search the web for 'python programming'."
+    )
 
-    print("\n🌐 LIVE DEMO — calling Groq with tools\n")
+    print("\n🌐 LIVE DEMO — Groq tools (multi-round loop)\n")
     print(f"User: {user_message}\n")
 
-    messages = [{"role": "user", "content": user_message}]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant with access to tools. "
+                "Use tools for weather, arithmetic, and web search. "
+                "Call every tool you need before giving a final answer."
+            ),
+        },
+        {"role": "user", "content": user_message},
+    ]
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-    )
+    def call_with_tools():
+        wait = 1
+        last_error = None
 
-    assistant_msg = response.choices[0].message
-    tool_calls = assistant_msg.tool_calls or []
 
-    print("STEP 2 — Assistant tool_calls:")
-    for tc in tool_calls:
-        print(f"  • {tc.function.name}({tc.function.arguments})")
+        # call api Groq API call. with max limit 
 
-    messages.append({
-        "role": "assistant",
-        "content": assistant_msg.content,
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-            }
-            for tc in tool_calls
-        ],
-    })
+        for attempt in range(MAX_API_RETRIES):
+            try:
+                return client.chat.completions.create(
+                    model=DEFAULT_MODEL,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                )
+            except APIStatusError as error:
+                last_error = error
+                body = getattr(error, "body", None) or {}
+                code = (
+                    body.get("error", {}).get("code")
+                    if isinstance(body, dict)
+                    else None
+                )
+                if code == "tool_use_failed" and attempt < MAX_API_RETRIES - 1:
+                    print(f"⚠️  tool_use_failed, retrying in {wait}s...")
+                    time.sleep(wait)
+                    wait *= 2
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Groq call failed")
 
-    for tc in tool_calls:
-        args = json.loads(tc.function.arguments)
-        output = execute_tool(tc.function.name, args)
-        content = json.dumps(output) if isinstance(output, (dict, list)) else str(output)
-        messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
-        print(f"STEP 3 — tool_result [{tc.id}]: {content}")
+    for round_num in range(1, max_rounds + 1):
+        print("=" * 72)
+        print(f"ROUND==> {round_num}")
+        print("=" * 72)
 
-    final = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        tools=TOOLS,
-    )
+        response = call_with_tools()
+        assistant_msg = response.choices[0].message
+        tool_calls = assistant_msg.tool_calls or []
 
-    print(f"\nSTEP 4 — Final: {final.choices[0].message.content}")
+        print(f"Assistant content: {assistant_msg.content}")
+
+        if not tool_calls:
+            print(f"\n✅ FINAL RESPONSE (round {round_num}):")
+            print(assistant_msg.content or "(empty content)")
+            return
+
+        print(f"Tool calls ({len(tool_calls)}):")
+        for tc in tool_calls:
+            print(f"  • {tc.function.name}({tc.function.arguments})")
+
+        messages.append({
+            "role": "assistant",
+            "content": assistant_msg.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in tool_calls
+            ],
+        })
+
+        for tc in tool_calls:
+            args = json.loads(tc.function.arguments)
+            output = execute_tool(tc.function.name, args)
+            content = (
+                json.dumps(output) if isinstance(output, (dict, list)) else str(output)
+            )
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": content,
+            })
+            print(f"  → tool_result [{tc.id}]: {content}")
+
+        print()
+
+    print(f"\n⚠️  Stopped after {max_rounds} rounds without a final text answer.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Day 8 — tools as JSON schemas")
-    parser.add_argument("--live", action="store_true", help="Run live Groq tool-use demo")
+    parser.add_argument(
+        "--max-rounds",
+        type=int,
+        default=MAX_ROUNDS,
+        help=f"Max tool rounds before stopping (default: {MAX_ROUNDS})",
+    )
     args = parser.parse_args()
-
-    # Print the manual trace
-    # This is a manual trace of the tool-use turn.
-    print_manual_trace() # 4 steps. 1 request, 1 assistant tool_use block, 2 tool_results, 1 final response.
-
-    
-
-    # Verify step 2 → step 3 with our stub implementations
-    # This is where the code will run the tool calls.
-    print("\n" + "=" * 72)
-    print("EXECUTING STEP 2 → STEP 3 (stub implementations)")
-    print("=" * 72)
-    computed = run_tool_loop_from_assistant(MANUAL_TRACE["step_2_assistant_tool_use"])
-    # This is where the code will run the tool calls.
-    for item in computed:
-        print(_pretty(item))
-
-    if args.live:
-        run_live_demo()
+    run_live_demo(max_rounds=args.max_rounds)
