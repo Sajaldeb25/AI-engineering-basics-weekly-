@@ -105,6 +105,7 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 def calculator_impl(a: float, b: float, operation: str) -> float:
+    print("Inside calculator_impl function\n\n")
     ops = {
         "add": lambda x, y: x + y,
         "subtract": lambda x, y: x - y,
@@ -119,6 +120,7 @@ def calculator_impl(a: float, b: float, operation: str) -> float:
 
 
 def get_weather_impl(city: str, units: str = "metric") -> dict:
+    print("Inside get_weather_impl function\n\n")
     # Mock data — a real app would call a weather API
     temp = 18 if units == "metric" else 64
     unit_label = "°C" if units == "metric" else "°F"
@@ -131,6 +133,7 @@ def get_weather_impl(city: str, units: str = "metric") -> dict:
 
 
 def search_web_impl(query: str, num_results: int = 3) -> list[dict]:
+    print("Inside search_web_impl function\n\n")
     # Mock data — a real app would call a search API
     return [
         {"title": f"Result {i + 1} for '{query}'", "url": f"https://example.com/{i + 1}"}
@@ -139,6 +142,8 @@ def search_web_impl(query: str, num_results: int = 3) -> list[dict]:
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
+
+    print(f"\n\nReceived function name {name} and argumaents {arguments}.\n\n")
     """Run the matching stub function for a tool call."""
     if name == "calculator":
         return calculator_impl(arguments["a"], arguments["b"], arguments["operation"])
@@ -229,14 +234,15 @@ def run_live_demo(max_rounds: int = MAX_ROUNDS):
         assistant_msg = response.choices[0].message
         tool_calls = assistant_msg.tool_calls or []
 
-        print(f"Assistant content: {assistant_msg.content}")
+        print(f"Assistant content: {round_num} :--> {assistant_msg.content}")
 
         if not tool_calls:
             print(f"\n✅ FINAL RESPONSE (round {round_num}):")
             print(assistant_msg.content or "(empty content)")
             return
 
-        print(f"Tool calls ({len(tool_calls)}):")
+        print(f"Tool calls from assistant_msg.tool_calls:  ({len(tool_calls)}):\n\n")
+
         for tc in tool_calls:
             print(f"  • {tc.function.name}({tc.function.arguments})")
 
@@ -256,9 +262,17 @@ def run_live_demo(max_rounds: int = MAX_ROUNDS):
             ],
         })
 
+        print("\n\n Prepared messages with function id, name and arguments: \n\n")
+        print(messages)
+
+
+        print("\n\nExecuting tool calls...\n\n")
+
         for tc in tool_calls:
             args = json.loads(tc.function.arguments)
-            output = execute_tool(tc.function.name, args)
+
+            output = execute_tool(tc.function.name, args) # function name and arguments are passed to the execute_tool function
+            
             content = (
                 json.dumps(output) if isinstance(output, (dict, list)) else str(output)
             )
@@ -267,9 +281,12 @@ def run_live_demo(max_rounds: int = MAX_ROUNDS):
                 "tool_call_id": tc.id,
                 "content": content,
             })
-            print(f"  → tool_result [{tc.id}]: {content}")
+            # printing tool result to the console
+            print(f"  → tool_result from tool_calls [{tc.id}]: {content}")
 
-        print()
+        
+        print(f"\n\n Prepared message after tool calls execution:\n {messages}.")
+        print(f"\n\n Round {round_num} completed.\n\n")
 
     print(f"\n⚠️  Stopped after {max_rounds} rounds without a final text answer.")
 
@@ -283,4 +300,5 @@ if __name__ == "__main__":
         help=f"Max tool rounds before stopping (default: {MAX_ROUNDS})",
     )
     args = parser.parse_args()
+    print(f"Args are : {args}")
     run_live_demo(max_rounds=args.max_rounds)
