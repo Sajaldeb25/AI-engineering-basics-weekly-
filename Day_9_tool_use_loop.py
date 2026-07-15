@@ -27,13 +27,24 @@ calculator_tool = {
     }
 }
 
+# list of tools to use
 tools = [calculator_tool]
 
 # -------------------------------
 # 2. Tool execution function
 # -------------------------------
 def execute_calculator(expression: str) -> float:
-    """Safely evaluate an arithmetic expression."""
+    """
+    Safely evaluate an arithmetic expression.
+    Args:
+        expression: The arithmetic expression to evaluate, e.g. '4892 * 0.17 - 33 + 100'
+    Returns:
+        The result of the evaluation as a float.
+    Raises:
+        ValueError: If the expression is invalid.
+    
+    """
+    print(f"\n\n Evaluating expression: {expression}\n")
     safe_dict = {
         'abs': abs, 
         'round': round, 
@@ -57,6 +68,13 @@ def execute_calculator(expression: str) -> float:
 # 3. Main tool‑use loop
 # -------------------------------
 def run_agent_with_tools(user_message: str):
+    print(f"\n\n Running agent with tools...\n")
+    print(f"User message: {user_message}\n")
+    print(f"Tools: {tools}\n")
+    # print(f"Max iterations: {max_iterations}\n")
+    # print(f"Model: {model}\n") 
+
+
     client = Groq(api_key=os.getenv("GORQ_API_KEY"))
     model = "llama-3.3-70b-versatile"
 
@@ -73,14 +91,17 @@ def run_agent_with_tools(user_message: str):
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=tools,
+            tools=tools,              # list of tools to use
             tool_choice="auto",       # let model decide
             temperature=0.3,
+            max_tokens=1000,
+
         )
 
         choice = response.choices[0]
         finish_reason = choice.finish_reason
-
+        print(f"\n\n Finish reason: {finish_reason}\n")
+        
         # Step 2: Check if the model wants to call a tool
         if finish_reason == "tool_calls":
             tool_calls = choice.message.tool_calls
@@ -140,7 +161,7 @@ def run_agent_with_tools(user_message: str):
 # 4. Test with the given query
 # -------------------------------
 if __name__ == "__main__":
-    query = "What is 17% of 4892 minus 33?"
+    query = "What is 18% of 45612 minus 11 plus 444, then devide whole things by 11?"
     print(f"🧑 User: {query}")
     answer = run_agent_with_tools(query)
     print(f"🤖 Assistant: {answer}")
