@@ -1,10 +1,14 @@
 import os
 import json
-from dotenv import load_dotenv
-from groq import Groq
 import math
+import time
+
+from dotenv import load_dotenv
+from groq import APIStatusError, Groq
 
 load_dotenv()
+
+MAX_API_RETRIES = 3
 
 # -------------------------------
 # 1. Tool definition
@@ -79,24 +83,58 @@ def run_agent_with_tools(user_message: str):
     model = "llama-3.3-70b-versatile"
 
     # Start conversation
-    messages = [{"role": "user", "content": user_message}]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant. For math questions, always use the "
+                "calculator tool. For percentages, convert them to decimals "
+                "(e.g. 18% → 0.18 * x). Do not use percent sign as modulo."
+            ),
+        },
+        {"role": "user", "content": user_message},
+    ]
 
     max_iterations = 5  # avoid infinite loops
     iteration = 0
 
+    def call_with_tools():
+        """Call Groq; retry on intermittent tool_use_failed errors."""
+        wait = 1
+        last_error = None
+        for attempt in range(MAX_API_RETRIES):
+            try:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0.3,
+                    max_tokens=1000,
+                )
+            except APIStatusError as error:
+                last_error = error
+                body = getattr(error, "body", None) or {}
+                code = (
+                    body.get("error", {}).get("code")
+                    if isinstance(body, dict)
+                    else None
+                )
+                if code == "tool_use_failed" and attempt < MAX_API_RETRIES - 1:
+                    print(f"⚠️  tool_use_failed, retrying in {wait}s...")
+                    time.sleep(wait)
+                    wait *= 2
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Groq call failed")
+
     while iteration < max_iterations:
         iteration += 1
 
-        # Step 1: Call the model with tools
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,              # list of tools to use
-            tool_choice="auto",       # let model decide
-            temperature=0.3,
-            max_tokens=1000,
-
-        )
+        # Step 1: Call the model with tools (retry on tool_use_failed)
+        response = call_with_tools()
 
         choice = response.choices[0]
         finish_reason = choice.finish_reason
@@ -161,7 +199,7 @@ def run_agent_with_tools(user_message: str):
 # 4. Test with the given query
 # -------------------------------
 if __name__ == "__main__":
-    query = "What is 18% of 45612 minus 11 plus 444, then devide whole things by 11?"
+    query = "What is 18% of 45612 minus 11 plus 444, then devide whole things by 12?"
     print(f"🧑 User: {query}")
     answer = run_agent_with_tools(query)
     print(f"🤖 Assistant: {answer}")
