@@ -85,7 +85,21 @@ def run_agent_with_tools(user_message: str):
         if finish_reason == "tool_calls":
             tool_calls = choice.message.tool_calls
             # Append the assistant's message with tool_calls
-            messages.append(choice.message.model_dump())  # includes tool_calls
+            messages.append({
+                "role": "assistant",
+                "content": choice.message.content,
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments
+                        }
+                    }
+                    for tool_call in tool_calls
+                ]
+            })  # includes tool_calls
 
             # Step 3: Execute each tool call
             for tool_call in tool_calls:
