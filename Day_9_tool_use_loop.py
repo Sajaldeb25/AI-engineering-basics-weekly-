@@ -1,7 +1,17 @@
+""" 
+add tools to the agent
+1. calculator
+2. get_current_time
+3. get_weather
+4. convert_units
+5. fetch_joke
+6. word_count
+"""
 import os
 import json
 import math
 import time
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
@@ -31,8 +41,27 @@ calculator_tool = {
     }
 }
 
+get_current_time_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_current_time",
+        "description": "Get the current date and time. Use for questions about what time it is now.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "enum": ["local", "UTC"],
+                    "description": "Timezone to use (default: local)",
+                }
+            },
+            "required": [],
+        },
+    },
+}
+
 # list of tools to use
-tools = [calculator_tool]
+tools = [calculator_tool, get_current_time_tool]
 
 # -------------------------------
 # 2. Tool execution function
@@ -68,6 +97,16 @@ def execute_calculator(expression: str) -> float:
     except Exception as e:
         raise ValueError(f"Invalid expression '{expression}': {e}")
 
+
+def execute_get_current_time(tz: str = "local") -> str:
+    """Return current date/time as a readable string."""
+    if tz == "UTC":
+        now = datetime.now(timezone.utc)
+        return now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = datetime.now().astimezone()
+    return now.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 # -------------------------------
 # 3. Main tool‑use loop
 # -------------------------------
@@ -87,9 +126,9 @@ def run_agent_with_tools(user_message: str):
         {
             "role": "system",
             "content": (
-                "You are a helpful assistant. For math questions, always use the "
-                "calculator tool. For percentages, convert them to decimals "
-                "(e.g. 18% → 0.18 * x). Do not use percent sign as modulo."
+                "You are a helpful assistant with tools. "
+                "Use calculator for math (percentages as decimals, e.g. 18% → 0.18 * x). "
+                "Use get_current_time for questions about the current date or time."
             ),
         },
         {"role": "user", "content": user_message},
@@ -172,6 +211,10 @@ def run_agent_with_tools(user_message: str):
                         result_str = str(result)
                     except ValueError as e:
                         result_str = f"Error: {e}"
+                elif function_name == "get_current_time":
+                    tz = function_args.get("timezone", "local")
+                    result_str = execute_get_current_time(tz)
+                    print(f"\n Current time ({tz}): {result_str}\n")
                 else:
                     result_str = f"Unknown tool: {function_name}"
 
@@ -199,7 +242,7 @@ def run_agent_with_tools(user_message: str):
 # 4. Test with the given query
 # -------------------------------
 if __name__ == "__main__":
-    query = "What is 18% of 45612 minus 11 plus 444, then devide whole things by 12?"
+    query = "What time is it now, and what is 17% of 4892?"
     print(f"🧑 User: {query}")
     answer = run_agent_with_tools(query)
     print(f"🤖 Assistant: {answer}")
