@@ -12,6 +12,7 @@ import json
 import math
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
@@ -51,8 +52,11 @@ get_current_time_tool = {
             "properties": {
                 "timezone": {
                     "type": "string",
-                    "enum": ["local", "UTC"],
-                    "description": "Timezone to use (default: local)",
+                    "description": (
+                        "Timezone to use. Examples: 'local', 'UTC', "
+                        "'Asia/Dhaka', 'Asia/Kolkata', 'Asia/Kuala_Lumpur', "
+                        "'Europe/Oslo', 'Europe/Berlin'."
+                    ),
                 }
             },
             "required": [],
@@ -100,11 +104,26 @@ def execute_calculator(expression: str) -> float:
 
 def execute_get_current_time(tz: str = "local") -> str:
     """Return current date/time as a readable string."""
-    if tz == "UTC":
-        now = datetime.now(timezone.utc)
-        return now.strftime("%Y-%m-%d %H:%M:%S UTC")
-    now = datetime.now().astimezone()
-    return now.strftime("%Y-%m-%d %H:%M:%S %Z")
+    tz_name = (tz or "local").strip()
+    key = tz_name.lower()
+
+    try:
+        if key == "local":
+            now = datetime.now().astimezone()
+            label = "local"
+        elif key == "utc":
+            now = datetime.now(timezone.utc)
+            label = "UTC"
+        else:
+            now = datetime.now(ZoneInfo(tz_name))
+            label = tz_name
+    except ZoneInfoNotFoundError:
+        return (
+            f"Error: unknown timezone '{tz_name}'. "
+            "Use IANA names like Asia/Kolkata, Asia/Dhaka, Europe/Oslo."
+        )
+
+    return f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} ({label})"
 
 
 # -------------------------------
@@ -242,7 +261,7 @@ def run_agent_with_tools(user_message: str):
 # 4. Test with the given query
 # -------------------------------
 if __name__ == "__main__":
-    query = "What time is it now, and what is 17% of 4892?"
+    query = "What time is it now in oslo, and what is 50% of 4892 minus 11 plus 444, then devide whole things by 12?"
     print(f"🧑 User: {query}")
     answer = run_agent_with_tools(query)
     print(f"🤖 Assistant: {answer}")
