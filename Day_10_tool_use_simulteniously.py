@@ -86,8 +86,8 @@ SEARCH_WEB_TOOL = {
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
                 "num_results": {
-                    "type": "integer",
-                    "description": "Number of results (default 3, max 10)",
+                    "type": "string",
+                    "description": "Number of results as digits, e.g. '3' or '5' (default '3', max '5')",
                 },
             },
             "required": ["query"],
@@ -138,6 +138,7 @@ def execute_get_current_time(tz: str = "local") -> str:
 
 
 def search_serper(query: str, num_results: int) -> list[dict]:
+    print(f"\nSearching Serper for {query} with {num_results} results")
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
         return []
@@ -157,10 +158,13 @@ def search_serper(query: str, num_results: int) -> list[dict]:
             "url": item.get("link", ""),
             "snippet": item.get("snippet", ""),
         })
+
+    print(f"\nResults from Serper: {results}")
     return results
 
 
 def search_duckduckgo(query: str, num_results: int) -> list[dict]:
+    print(f"Searching DuckDuckGo for {query} with {num_results} results")
     """Free web search via DuckDuckGo HTML (no API key)."""
     response = requests.post(
         "https://html.duckduckgo.com/html/",
@@ -249,10 +253,12 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
     if name == "get_current_time":
         return execute_get_current_time(arguments.get("timezone", "local"))
     if name == "search_web":
-        return execute_search_web(
-            arguments.get("query", ""),
-            arguments.get("num_results", 3),
-        )
+        raw_num = arguments.get("num_results", 3)
+        try:
+            num_results = int(raw_num)
+        except (TypeError, ValueError):
+            num_results = 3
+        return execute_search_web(arguments.get("query", ""), num_results)
     return f"Error: unknown tool '{name}'"
 
 
@@ -416,8 +422,8 @@ def parse_args():
     parser.add_argument(
         "-q", "--question",
         default=(
-            "What time is it in Asia/Dhaka, what is 17% of 4892, "
-            "and search the web for latest Python 3.13 release news?"
+            "What time is it in India, what is sum of 10, 15, 20, 15 and 40,"
+            "and search the web for how to build a AI agent?"
         ),
         help="User question (designed to trigger multiple tools at once)",
     )
