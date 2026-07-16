@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
+import requests
 
 load_dotenv()
 
@@ -64,8 +65,18 @@ get_current_time_tool = {
     },
 }
 
+fetch_joke_tool = {
+    "type": "function",
+    "function": {
+        "name": "fetch_joke",
+        "description": "Fetch a random joke from the internet.",
+        "parameters": {
+            "type": "object",
+        }
+    }
+}
 # list of tools to use
-tools = [calculator_tool, get_current_time_tool]
+tools = [calculator_tool, get_current_time_tool, fetch_joke_tool]
 
 # -------------------------------
 # 2. Tool execution function
@@ -97,6 +108,7 @@ def execute_calculator(expression: str) -> float:
     }
     try:
         result = eval(expression, {"__builtins__": {}}, safe_dict)
+        print(f"\n\n Result of the calculator: {result}\n")
         return float(result)
     except Exception as e:
         raise ValueError(f"Invalid expression '{expression}': {e}")
@@ -124,6 +136,20 @@ def execute_get_current_time(tz: str = "local") -> str:
         )
 
     return f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} ({label})"
+
+
+def fetch_joke() -> str:
+    """Fetch a random joke from the internet."""
+    try:
+        response = requests.get("https://official-joke-api.appspot.com/random_joke")
+        joke = response.json()
+        print(f"\n\n Response from joke API: {joke}\n")
+
+        time.sleep(3)
+        return f"Joke: {joke['setup']} {joke['punchline']}"
+
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching joke: {e}"
 
 
 # -------------------------------
@@ -167,7 +193,7 @@ def run_agent_with_tools(user_message: str):
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.3,
+                    temperature=0.1,
                     max_tokens=1000,
                 )
             except APIStatusError as error:
@@ -234,6 +260,10 @@ def run_agent_with_tools(user_message: str):
                     tz = function_args.get("timezone", "local")
                     result_str = execute_get_current_time(tz)
                     print(f"\n Current time ({tz}): {result_str}\n")
+
+                elif function_name == "fetch_joke":
+                    result_str = fetch_joke()
+            
                 else:
                     result_str = f"Unknown tool: {function_name}"
 
@@ -261,7 +291,9 @@ def run_agent_with_tools(user_message: str):
 # 4. Test with the given query
 # -------------------------------
 if __name__ == "__main__":
-    query = "What time is it now in oslo, and what is 50% of 4892 minus 11 plus 444, then devide whole things by 12?"
+    # query = "What time is it now in oslo, and what is 50% of 4892 minus 11 plus 444, then devide whole things by 12? also tell me a joke"
+    query = "What is 50% of 34573 minus 11 plus 1111, then devide whole things by 12? also tell me a joke"
+    
     print(f"🧑 User: {query}")
     answer = run_agent_with_tools(query)
     print(f"🤖 Assistant: {answer}")
