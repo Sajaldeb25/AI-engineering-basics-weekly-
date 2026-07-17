@@ -402,7 +402,7 @@ def run_agent(
             except json.JSONDecodeError as error:
                 result = f"Error: invalid JSON arguments: {error}"
             else:
-                print(f"\n▶ Executing {tc.function.name}...")
+                print(f"\n▶ -----> Executing {tc.function.name}...")
                 result = execute_tool(tc.function.name, args)
                 print(f"  Result: {result[:200]}{'...' if len(result) > 200 else ''}")
 
