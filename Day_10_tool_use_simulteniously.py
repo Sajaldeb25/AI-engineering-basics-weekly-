@@ -99,167 +99,167 @@ TOOLS = [CALCULATOR_TOOL, GET_CURRENT_TIME_TOOL, SEARCH_WEB_TOOL]
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
 
-# ---------------------------------------------------------------------------
-# Tool implementations
-# ---------------------------------------------------------------------------
 
-def execute_calculator(expression: str) -> str:
-    safe_dict = {
-        "abs": abs,
-        "round": round,
-        "pow": pow,
-        "sqrt": math.sqrt,
-        "pi": math.pi,
-        "e": math.e,
-    }
-    try:
-        result = float(eval(expression, {"__builtins__": {}}, safe_dict))
-        return str(result)
-    except Exception as error:
-        return f"Error: invalid expression '{expression}': {error}"
+class ExecuteTool:
+    
+    def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        """Run one tool and always return a string (required for role=tool)."""
+        if name == "calculator":
+            return self.execute_calculator(arguments.get("expression", ""))
+        if name == "get_current_time":
+            return self.execute_get_current_time(arguments.get("timezone", "local"))
+        if name == "search_web":
+            raw_num = arguments.get("num_results", 3)
+            try:
+                num_results = int(raw_num)
+            except (TypeError, ValueError):
+                num_results = 3
+            return self.execute_search_web(arguments.get("query", ""), num_results)
+        return f"Error: unknown tool '{name}'"
 
-
-def execute_get_current_time(tz: str = "local") -> str:
-    tz_name = (tz or "local").strip()
-    key = tz_name.lower()
-    try:
-        if key == "local":
-            now = datetime.now().astimezone()
-            label = "local"
-        elif key == "utc":
-            now = datetime.now(timezone.utc)
-            label = "UTC"
-        else:
-            now = datetime.now(ZoneInfo(tz_name))
-            label = tz_name
-    except ZoneInfoNotFoundError:
-        return f"Error: unknown timezone '{tz_name}'"
-    return f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} ({label})"
+    def execute_calculator(self, expression: str) -> str:
+        safe_dict = {
+            "abs": abs,
+            "round": round,
+            "pow": pow,
+            "sqrt": math.sqrt,
+            "pi": math.pi,
+            "e": math.e,
+        }
+        try:
+            result = float(eval(expression, {"__builtins__": {}}, safe_dict))
+            return str(result)
+        except Exception as error:
+            return f"Error: invalid expression '{expression}': {error}"
 
 
-def search_serper(query: str, num_results: int) -> list[dict]:
-    print(f"\nSearching Serper for {query} with {num_results} results")
-    api_key = os.getenv("SERPER_API_KEY")
-    if not api_key:
-        return []
-
-    response = requests.post(
-        "https://google.serper.dev/search",
-        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-        json={"q": query, "num": num_results},
-        timeout=10,
-    )
-    response.raise_for_status()
-    data = response.json()
-    results = []
-    for item in data.get("organic", [])[:num_results]:
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-        })
-
-    print(f"\nResults from Serper: {results}")
-    return results
+    def execute_get_current_time(self, tz: str = "local") -> str:
+        tz_name = (tz or "local").strip()
+        key = tz_name.lower()
+        try:
+            if key == "local":
+                now = datetime.now().astimezone()
+                label = "local"
+            elif key == "utc":
+                now = datetime.now(timezone.utc)
+                label = "UTC"
+            else:
+                now = datetime.now(ZoneInfo(tz_name))
+                label = tz_name
+        except ZoneInfoNotFoundError:
+            return f"Error: unknown timezone '{tz_name}'"
+        return f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} ({label})"
 
 
-def search_duckduckgo(query: str, num_results: int) -> list[dict]:
-    print(f"Searching DuckDuckGo for {query} with {num_results} results")
-    """Free web search via DuckDuckGo HTML (no API key)."""
-    response = requests.post(
-        "https://html.duckduckgo.com/html/",
-        data={"q": query},
-        headers={"User-Agent": "Mozilla/5.0 (Day10-learning-bot)"},
-        timeout=10,
-    )
-    response.raise_for_status()
-    html = response.text
+    def search_serper(self, query: str, num_results: int) -> list[dict]:
+        print(f"\nSearching Serper for {query} with {num_results} results")
+        api_key = os.getenv("SERPER_API_KEY")
+        if not api_key:
+            return []
 
-    # Parse result blocks: <a class="result__a" href="...">title</a>
-    links = re.findall(
-        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
-        html,
-        re.IGNORECASE,
-    )
-    snippets = re.findall(
-        r'class="result__snippet"[^>]*>(.*?)</(?:td|div|span)>',
-        html,
-        re.IGNORECASE | re.DOTALL,
-    )
-
-    results = []
-    for i, (url, title) in enumerate(links[:num_results]):
-        clean_title = re.sub(r"<[^>]+>", "", title).strip()
-        clean_url = urllib.parse.unquote(url)
-        snippet = ""
-        if i < len(snippets):
-            snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip()
-        results.append({"title": clean_title, "url": clean_url, "snippet": snippet})
-
-    if not results:
-        # Fallback: DuckDuckGo instant answer API (sparse but keyless)
-        params = {"q": query, "format": "json", "no_redirect": 1, "no_html": 1}
-        r = requests.get("https://api.duckduckgo.com/", params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        if data.get("AbstractText"):
+        response = requests.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": num_results},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        results = []
+        for item in data.get("organic", [])[:num_results]:
             results.append({
-                "title": data.get("Heading", query),
-                "url": data.get("AbstractURL", ""),
-                "snippet": data.get("AbstractText", ""),
+                "title": item.get("title", ""),
+                "url": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
             })
-        for topic in data.get("RelatedTopics", [])[: num_results - 1]:
-            if isinstance(topic, dict) and "Text" in topic:
-                results.append({
-                    "title": topic["Text"][:80],
-                    "url": topic.get("FirstURL", ""),
-                    "snippet": topic["Text"],
-                })
 
-    return results[:num_results]
+        print(f"\nResults from Serper: {results}")
+        return results
 
 
-def execute_search_web(query: str, num_results: int = 3) -> str:
-    num_results = max(1, min(num_results, 5))
-    provider = "Serper" if os.getenv("SERPER_API_KEY") else "DuckDuckGo"
-    try:
-        if provider == "Serper":
-            results = search_serper(query, num_results)
-            if not results:
-                results = search_duckduckgo(query, num_results)
-                provider = "DuckDuckGo (Serper returned nothing)"
-        else:
-            results = search_duckduckgo(query, num_results)
+    def search_duckduckgo(self, query: str, num_results: int) -> list[dict]:
+        print(f"Searching DuckDuckGo for {query} with {num_results} results")
+        """Free web search via DuckDuckGo HTML (no API key)."""
+        response = requests.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": query},
+            headers={"User-Agent": "Mozilla/5.0 (Day10-learning-bot)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        html = response.text
+
+        # Parse result blocks: <a class="result__a" href="...">title</a>
+        links = re.findall(
+            r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+            html,
+            re.IGNORECASE,
+        )
+        snippets = re.findall(
+            r'class="result__snippet"[^>]*>(.*?)</(?:td|div|span)>',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        results = []
+        for i, (url, title) in enumerate(links[:num_results]):
+            clean_title = re.sub(r"<[^>]+>", "", title).strip()
+            clean_url = urllib.parse.unquote(url)
+            snippet = ""
+            if i < len(snippets):
+                snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip()
+            results.append({"title": clean_title, "url": clean_url, "snippet": snippet})
 
         if not results:
-            return f"No results found for '{query}'."
+            # Fallback: DuckDuckGo instant answer API (sparse but keyless)
+            params = {"q": query, "format": "json", "no_redirect": 1, "no_html": 1}
+            r = requests.get("https://api.duckduckgo.com/", params=params, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("AbstractText"):
+                results.append({
+                    "title": data.get("Heading", query),
+                    "url": data.get("AbstractURL", ""),
+                    "snippet": data.get("AbstractText", ""),
+                })
+            for topic in data.get("RelatedTopics", [])[: num_results - 1]:
+                if isinstance(topic, dict) and "Text" in topic:
+                    results.append({
+                        "title": topic["Text"][:80],
+                        "url": topic.get("FirstURL", ""),
+                        "snippet": topic["Text"],
+                    })
 
-        lines = [f"Search provider: {provider}"]
-        for i, item in enumerate(results, 1):
-            lines.append(f"{i}. {item['title']}")
-            if item.get("url"):
-                lines.append(f"   {item['url']}")
-            if item.get("snippet"):
-                lines.append(f"   {item['snippet']}")
-        return "\n".join(lines)
-    except requests.RequestException as error:
-        return f"Error: web search failed: {error}"
+        return results[:num_results]
 
 
-def execute_tool(name: str, arguments: dict[str, Any]) -> str:
-    """Run one tool and always return a string (required for role=tool)."""
-    if name == "calculator":
-        return execute_calculator(arguments.get("expression", ""))
-    if name == "get_current_time":
-        return execute_get_current_time(arguments.get("timezone", "local"))
-    if name == "search_web":
-        raw_num = arguments.get("num_results", 3)
+    def execute_search_web(self, query: str, num_results: int = 3) -> str:
+        num_results = max(1, min(num_results, 5))
+        provider = "Serper" if os.getenv("SERPER_API_KEY") else "DuckDuckGo"
         try:
-            num_results = int(raw_num)
-        except (TypeError, ValueError):
-            num_results = 3
-        return execute_search_web(arguments.get("query", ""), num_results)
-    return f"Error: unknown tool '{name}'"
+            if provider == "Serper":
+                results = self.search_serper(query, num_results)
+                if not results:
+                    results = self.search_duckduckgo(query, num_results)
+                    provider = "DuckDuckGo (Serper returned nothing)"
+            else:
+                results = self.search_duckduckgo(query, num_results)
+
+            if not results:
+                return f"No results found for '{query}'."
+
+            lines = [f"Search provider: {provider}"]
+            for i, item in enumerate(results, 1):
+                lines.append(f"{i}. {item['title']}")
+                if item.get("url"):
+                    lines.append(f"   {item['url']}")
+                if item.get("snippet"):
+                    lines.append(f"   {item['snippet']}")
+            return "\n".join(lines)
+        except requests.RequestException as error:
+            return f"Error: web search failed: {error}"
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +395,7 @@ def run_agent(
             print(f"   • {tc.function.name}({tc.function.arguments})")
 
         messages.append(assistant_message_from_response(message))
+        # ExecuteTool = ExecuteTool()
 
         for tc in tool_calls:
             try:
@@ -403,7 +404,7 @@ def run_agent(
                 result = f"Error: invalid JSON arguments: {error}"
             else:
                 print(f"\n▶ -----> Executing {tc.function.name}...")
-                result = execute_tool(tc.function.name, args)
+                result = ExecuteTool().execute_tool(tc.function.name, args)
                 print(f"  Result: {result[:200]}{'...' if len(result) > 200 else ''}")
 
             messages.append({
