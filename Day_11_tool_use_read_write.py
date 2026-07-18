@@ -1,25 +1,29 @@
 """
-Day 11 — File read/write tools (sandboxed)
+Day 11 — Context-first Q&A with web search fallback
 
-1. Add file_read and file_write — let the LLM interact with the filesystem safely
-2. Observe: what happens when you give the LLM a tool it doesn't need? Does it use it anyway?
+Flow:
+  1. Load todo.txt + Health_benifits.md into Groq context
+  2. Groq checks context → answer directly if found
+  3. If not found → Groq calls search_web
+  4. Search results go back to Groq → final answer
 
 Run:
-    python3 Day_11_tool_use_read_write.py                    # both scenarios
-    python3 Day_11_tool_use_read_write.py --scenario file    # needs file tools
-    python3 Day_11_tool_use_read_write.py --scenario no-file # observe unnecessary use
+    python3 Day_11_tool_use_read_write.py -q "How to learn and develop an AI agent?"
 """
 
 import argparse
 import json
 import os
+import re
 import time
+import uuid
 from typing import Any
 
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
 
-from all_tool_definition import FILE_READ_TOOL, FILE_WRITE_TOOL
+from all_tool_definition import SEARCH_WEB_TOOL
+from Day_10_tool_use_simulteniously import ExecuteTool
 
 load_dotenv()
 
@@ -27,14 +31,14 @@ DEFAULT_MODEL = "llama-3.3-70b-versatile"
 MAX_ROUNDS = 5
 MAX_API_RETRIES = 3
 
-FILE_TOOLS = [FILE_READ_TOOL, FILE_WRITE_TOOL]
+TOOLS = [SEARCH_WEB_TOOL]
+SOURCE_FILES = ["todo.txt", "Health_benifits.md"]
 
-SANDBOX_DIR = os.path.join(os.getcwd(), "sandbox") # get current working directory and join with sandbox directory
-os.makedirs(SANDBOX_DIR, exist_ok=True) # create sandbox directory if it doesn't exist
+SANDBOX_DIR = os.path.join(os.getcwd(), "sandbox")
+os.makedirs(SANDBOX_DIR, exist_ok=True)
 
 
 def _safe_path(filename: str) -> str:
-    """Resolve the full path inside the sandbox and prevent directory traversal."""
     basename = os.path.basename(filename)
     if not basename:
         raise ValueError("Invalid filename")
@@ -42,7 +46,6 @@ def _safe_path(filename: str) -> str:
 
 
 def file_read(filename: str) -> str:
-    """Read the content of a file from the sandbox."""
     safe_path = _safe_path(filename)
     if not os.path.exists(safe_path):
         return f"Error: File '{filename}' not found."
@@ -53,34 +56,8 @@ def file_read(filename: str) -> str:
         return f"Error reading file: {error}"
 
 
-def file_write(filename: str, content: str) -> str:
-    """Write content to a file in the sandbox (overwrites if exists)."""
-    safe_path = _safe_path(filename)
-    try:
-
-        print(f"\nWriting to {safe_path}")
-        print(f"\nContent: {content}\n\n")
-
-        with open(safe_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"Successfully wrote to '{filename}'."
-    except OSError as error:
-        return f"Error writing file: {error}"
-
-
-
-def execute_tool(name: str, arguments: dict[str, Any]) -> str:
-    if name == "file_read":
-        return file_read(arguments.get("filename", ""))
-    
-    if name == "file_write":
-        return file_write(arguments.get("filename", ""), arguments.get("content", ""))
-    
-    return f"Error: unknown tool '{name}'"
-
-
 def get_groq_api_key():
-    return os.getenv("GORQ_API_KEY")
+    return os.getenv("GROQ_API_KEY") or os.getenv("GORQ_API_KEY")
 
 
 def assistant_message_from_response(message) -> dict:
@@ -98,44 +75,93 @@ def assistant_message_from_response(message) -> dict:
             }
             for tc in tool_calls
         ]
-
-    print(f"\n Prepared payload for API calls, with tool function names and arguments: {payload}\n")
-    print(f"--------------------------------\n")
     return payload
+
+
+def parse_failed_tool_call(failed_generation: str) -> tuple[str, dict[str, Any]] | None:
+    """Recover when Groq returns tool_use_failed with malformed tool output."""
+    if not failed_generation:
+        return None
+    match = re.search(r"<function=(\w+)=?(\{.*\})</function>", failed_generation)
+    if not match:
+        return None
+    try:
+        return match.group(1), json.loads(match.group(2))
+    except json.JSONDecodeError:
+        return None
+
+
+def _append_synthetic_tool_result(messages: list[dict], tools_called: list[str], name: str, args: dict[str, Any], result: str) -> None:
+
+    tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
+    tools_called.append(name)
+    messages.append({
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": tool_call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        }],
+    })
+    messages.append({
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": result,
+    })
+
+
+def _load_source_context() -> str:
+    parts = []
+    for filename in SOURCE_FILES:
+        content = file_read(filename)
+        parts.append(f"--- {filename} ---\n{content}")
+
+    print(f"Source context: {parts}")
+    return "\n\n".join(parts)
+
+
+def _build_system_prompt(source_context: str) -> str:
+    source_list = ", ".join(SOURCE_FILES)
+    return (
+        "You answer user questions using the file context below.\n\n"
+        f"Context files: {source_list}\n\n"
+        "Rules:\n"
+        "1. First search for the answer in the provided context.\n"
+        "2. If the answer is clearly in the context, reply directly — do NOT call any tool.\n"
+        "3. If the answer is NOT in the context, call the search_web tool with a focused query.\n"
+        "4. After you receive search_web results, give the final answer to the user.\n"
+        "5. Do not invent facts not supported by the context or search results.\n\n"
+        f"File context:\n{source_context}"
+    )
 
 
 def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
     """
-    Run the file-tool agent loop. Returns stats for observation:
-      - tools_called: list of tool names invoked
-      - file_tools_used: bool
-      - final_answer: str
+    Single Groq tool loop:
+      question + file context + search_web tool → answer or web search → final answer
     """
     api_key = get_groq_api_key()
     if not api_key:
-        raise SystemExit("❌ GORQ_API_KEY not found in .env")
+        raise SystemExit("❌ GROQ_API_KEY (or GORQ_API_KEY) not found in .env")
 
     client = Groq(api_key=api_key)
+    executor = ExecuteTool()
     tools_called: list[str] = []
 
     print(f"\n🧑 User: {user_message}\n")
     print(f"📁 Sandbox: {SANDBOX_DIR}\n")
+    print(f"📄 Context files: {', '.join(SOURCE_FILES)}\n")
+
+    source_context = _load_source_context()
+    print("📖 Loaded file context for Groq.\n")
 
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a helpful assistant with sandbox file tools: file_read, file_write. "
-                "Only use file tools when the user explicitly asks to read or write a file. "
-                "For general questions (math, explanations, chat), answer directly without tools."
-            ),
-        },
+        {"role": "system", "content": _build_system_prompt(source_context)},
         {"role": "user", "content": user_message},
     ]
 
-    print(f"\n Prepared messages for API calls: {messages}\n")
-
-    def call_api():
+    def call_api() -> Any | None:
         wait = 1
         last_error = None
         for attempt in range(MAX_API_RETRIES):
@@ -143,7 +169,7 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
                 return client.chat.completions.create(
                     model=DEFAULT_MODEL,
                     messages=messages,
-                    tools=FILE_TOOLS,
+                    tools=TOOLS,
                     tool_choice="auto",
                     temperature=0.2,
                     max_tokens=1000,
@@ -151,11 +177,22 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
             except APIStatusError as error:
                 last_error = error
                 body = getattr(error, "body", None) or {}
-                code = (
-                    body.get("error", {}).get("code")
-                    if isinstance(body, dict)
-                    else None
+                error_info = body.get("error", {}) if isinstance(body, dict) else {}
+                code = error_info.get("code") if isinstance(error_info, dict) else None
+                failed_generation = (
+                    error_info.get("failed_generation", "")
+                    if isinstance(error_info, dict)
+                    else ""
                 )
+                recovered = parse_failed_tool_call(failed_generation)
+                if code == "tool_use_failed" and recovered:
+                    name, args = recovered
+                    print(f"⚠️  tool_use_failed — recovered {name}({args})")
+                    result = executor.execute_tool(name, args)
+                    preview = result[:120] + ("..." if len(result) > 120 else "")
+                    print(f"   → {preview}")
+                    _append_synthetic_tool_result(messages, tools_called, name, args, result)
+                    return None
                 if code == "tool_use_failed" and attempt < MAX_API_RETRIES - 1:
                     print(f"⚠️  tool_use_failed, retrying in {wait}s...")
                     time.sleep(wait)
@@ -169,13 +206,14 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
     final_answer = ""
 
     for round_num in range(1, max_rounds + 1):
-        print(f"\n---------------  Start of round {round_num} ---------------\n")
-
         print("=" * 72)
         print(f"ROUND {round_num}")
         print("=" * 72)
 
         response = call_api()
+        if response is None:
+            continue
+
         message = response.choices[0].message
         tool_calls = message.tool_calls or []
 
@@ -184,96 +222,45 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
             print(f"\n✅ FINAL: {final_answer}")
             break
 
-        print(f"Tool calls ({len(tool_calls)}):")
+        print(f"\nTool calls ({len(tool_calls)}):")
         messages.append(assistant_message_from_response(message))
 
         for tc in tool_calls:
             print(f"  • {tc.function.name}({tc.function.arguments})")
-            tools_called.append(tc.function.name)
-
             try:
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError as error:
                 result = f"Error: invalid JSON arguments: {error}"
             else:
-                print(f"\n Executing tool: {tc.function.name} with arguments: {args}\n")
-                result = execute_tool(tc.function.name, args)
+                result = executor.execute_tool(tc.function.name, args)
+                tools_called.append(tc.function.name)
                 preview = result[:120] + ("..." if len(result) > 120 else "")
-                print(f"Preview 120 characters:    → {preview}")
+                print(f"   → {preview}")
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
                 "content": result,
             })
-
-        print(f"\n Prepared messages for API calls: {messages}\n")
-
-        print(f"---------------  End of round {round_num} ---------------")
-
         print()
     else:
         final_answer = "Max rounds reached without final answer."
 
-    stats = {
+    return {
         "tools_called": tools_called,
-        "file_tools_used": len(tools_called) > 0,
+        "web_search_used": "search_web" in tools_called,
         "tool_call_count": len(tools_called),
         "final_answer": final_answer,
     }
-    return stats
-
-
-def print_observation(label: str, stats: dict, needs_file_tools: bool):
-    print("\n" + "-" * 72)
-    print(f"📊 OBSERVATION — {label}")
-    print("-" * 72)
-    print(f"  File tools needed for this task?  {needs_file_tools}")
-    print(f"  File tools actually called?       {stats['file_tools_used']}")
-    print(f"  Tools invoked:                   {stats['tools_called'] or '(none)'}")
-    print(f"  Total tool calls:                {stats['tool_call_count']}")
-
-    if needs_file_tools and not stats["file_tools_used"]:
-        print("  ⚠️  Expected file tools but none were used.")
-    elif not needs_file_tools and stats["file_tools_used"]:
-        print("  🔍 Model used file tools even though the question did not require them.")
-    elif not needs_file_tools and not stats["file_tools_used"]:
-        print("  ✅ Model answered without unnecessary file tool use.")
-    else:
-        print("  ✅ Model used file tools as expected.")
-
-
-SCENARIOS = {
-    "file": {
-        "query": (
-            "Write a file called 'todo.txt' in the sandbox with the content about what should be"
-             "learning and develpment path for developing an AI agent. Write point by point, later read the file back and summarize the tasks."
-        ),
-        "needs_file_tools": True,
-    },
-    "no-file": {
-        "query": "What is 15 times 7? Explain the answer briefly in one sentence.",
-        "needs_file_tools": False,
-    },
-}
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Day 11 — sandbox file read/write tools")
-    parser.add_argument(
-        "-q", "--question",
-        required=True,
-        help="Enter the question to be asked to the agent",
-    )
+    parser = argparse.ArgumentParser(description="Day 11 — context Q&A with web search fallback")
+    parser.add_argument("-q", "--question", required=True, help="Question to ask")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-
-    print(f"\n Arguments Scenario: {args.scenario}\n")
-    print(f"\n Arguments Question: {args.question}\n")
-
-    if args.question:
-        stats = run_agent(args.question)
-        print_observation("custom query", stats, needs_file_tools=True)
+    stats = run_agent(args.question)
+    print(f"\nTools used: {stats['tools_called'] or '(none)'}")
