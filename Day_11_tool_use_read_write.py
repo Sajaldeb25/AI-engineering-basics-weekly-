@@ -19,11 +19,15 @@ from typing import Any
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
 
+from all_tool_definition import FILE_READ_TOOL, FILE_WRITE_TOOL
+
 load_dotenv()
 
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 MAX_ROUNDS = 5
 MAX_API_RETRIES = 3
+
+FILE_TOOLS = [FILE_READ_TOOL, FILE_WRITE_TOOL]
 
 SANDBOX_DIR = os.path.join(os.getcwd(), "sandbox") # get current working directory and join with sandbox directory
 os.makedirs(SANDBOX_DIR, exist_ok=True) # create sandbox directory if it doesn't exist
@@ -63,51 +67,6 @@ def file_write(filename: str, content: str) -> str:
     except OSError as error:
         return f"Error writing file: {error}"
 
-
-FILE_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "file_read",
-            "description": "Read the content of a file from the sandbox directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Name of the file to read (e.g. 'notes.txt')",
-                    }
-                },
-                "required": ["filename"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "file_write",
-            "description": (
-                "Write content to a file in the sandbox directory. Overwrites if exists."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Name of the file to write (e.g. 'notes.txt')",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The text content to write to the file",
-                    },
-                },
-                "required": ["filename", "content"],
-            },
-        },
-    },
-]
-
-TOOL_NAMES = {t["function"]["name"] for t in FILE_TOOLS}
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> str:
@@ -287,8 +246,8 @@ def print_observation(label: str, stats: dict, needs_file_tools: bool):
 SCENARIOS = {
     "file": {
         "query": (
-            "Write a file called 'todo.txt' in the sandbox with three tasks for learning "
-            "Python APIs. Then read the file back and summarize the tasks."
+            "Write a file called 'todo.txt' in the sandbox with the content about what should be"
+             "learning and develpment path for developing an AI agent. Write point by point, later read the file back and summarize the tasks."
         ),
         "needs_file_tools": True,
     },
@@ -302,14 +261,9 @@ SCENARIOS = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Day 11 — sandbox file read/write tools")
     parser.add_argument(
-        "--scenario",
-        choices=["file", "no-file", "both"],
-        default="both",
-        help="Which demo to run (default: both)",
-    )
-    parser.add_argument(
         "-q", "--question",
-        help="Custom question (overrides scenario query)",
+        required=True,
+        help="Enter the question to be asked to the agent",
     )
     return parser.parse_args()
 
@@ -322,22 +276,4 @@ if __name__ == "__main__":
 
     if args.question:
         stats = run_agent(args.question)
-        print_observation("custom query", stats, needs_file_tools=False)
-    elif args.scenario == "both":
-        for name in ("file", "no-file"):
-            cfg = SCENARIOS[name]
-            print("\n" + "#" * 72)
-            print(f"SCENARIO: {name}")
-            print("#" * 72)
-            stats = run_agent(cfg["query"])
-            print_observation(name, stats, cfg["needs_file_tools"])
-    elif args.only_read:
-        stats = run_agent(args.question)
         print_observation("custom query", stats, needs_file_tools=True)
-    elif args.only_write:
-        stats = run_agent(args.question)
-        print_observation("custom query", stats, needs_file_tools=True)
-    else:
-        cfg = SCENARIOS[args.scenario]
-        stats = run_agent(cfg["query"])
-        print_observation(args.scenario, stats, cfg["needs_file_tools"])
