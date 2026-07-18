@@ -90,6 +90,8 @@ About Sajal Debnath:
 
 Birth: 19 september, 1997
 Birth place: House-139, Village-Rahimabad, Union-Jatrapur, Post office- Mograhat, Thana-Bagerhat Sador, District-Bagerhat, Division-Khulna, Bangladesh.
+Father: ChandiDas Debnath.
+Mother: Nivu Debnath 
 
 
 Secondary school: K.J.S.P.U. Rajapur high school, Subject science. Result;4.88 out of GPA 5
