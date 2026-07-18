@@ -25,8 +25,8 @@ DEFAULT_MODEL = "llama-3.3-70b-versatile"
 MAX_ROUNDS = 5
 MAX_API_RETRIES = 3
 
-SANDBOX_DIR = os.path.join(os.getcwd(), "sandbox")
-os.makedirs(SANDBOX_DIR, exist_ok=True)
+SANDBOX_DIR = os.path.join(os.getcwd(), "sandbox") # get current working directory and join with sandbox directory
+os.makedirs(SANDBOX_DIR, exist_ok=True) # create sandbox directory if it doesn't exist
 
 
 def _safe_path(filename: str) -> str:
@@ -113,8 +113,10 @@ TOOL_NAMES = {t["function"]["name"] for t in FILE_TOOLS}
 def execute_tool(name: str, arguments: dict[str, Any]) -> str:
     if name == "file_read":
         return file_read(arguments.get("filename", ""))
+    
     if name == "file_write":
         return file_write(arguments.get("filename", ""), arguments.get("content", ""))
+    
     return f"Error: unknown tool '{name}'"
 
 
@@ -137,6 +139,9 @@ def assistant_message_from_response(message) -> dict:
             }
             for tc in tool_calls
         ]
+
+    print(f"\n Prepared payload for API calls, with tool function names and arguments: {payload}\n")
+    print(f"--------------------------------\n")
     return payload
 
 
@@ -168,6 +173,8 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
         },
         {"role": "user", "content": user_message},
     ]
+
+    print(f"\n Prepared messages for API calls: {messages}\n")
 
     def call_api():
         wait = 1
@@ -203,6 +210,8 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
     final_answer = ""
 
     for round_num in range(1, max_rounds + 1):
+        print(f"\n---------------  Start of round {round_num} ---------------\n")
+
         print("=" * 72)
         print(f"ROUND {round_num}")
         print("=" * 72)
@@ -228,15 +237,18 @@ def run_agent(user_message: str, max_rounds: int = MAX_ROUNDS) -> dict:
             except json.JSONDecodeError as error:
                 result = f"Error: invalid JSON arguments: {error}"
             else:
+                print(f"\n Executing tool: {tc.function.name} with arguments: {args}\n")
                 result = execute_tool(tc.function.name, args)
                 preview = result[:120] + ("..." if len(result) > 120 else "")
-                print(f"    → {preview}")
+                print(f"Preview 120 characters:    → {preview}")
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
                 "content": result,
             })
+
+        print(f"\n Prepared messages for API calls: {messages}\n")
 
         print(f"---------------  End of round {round_num} ---------------")
 
@@ -305,6 +317,9 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
+    print(f"\n Arguments Scenario: {args.scenario}\n")
+    print(f"\n Arguments Question: {args.question}\n")
+
     if args.question:
         stats = run_agent(args.question)
         print_observation("custom query", stats, needs_file_tools=False)
@@ -316,6 +331,12 @@ if __name__ == "__main__":
             print("#" * 72)
             stats = run_agent(cfg["query"])
             print_observation(name, stats, cfg["needs_file_tools"])
+    elif args.only_read:
+        stats = run_agent(args.question)
+        print_observation("custom query", stats, needs_file_tools=True)
+    elif args.only_write:
+        stats = run_agent(args.question)
+        print_observation("custom query", stats, needs_file_tools=True)
     else:
         cfg = SCENARIOS[args.scenario]
         stats = run_agent(cfg["query"])
