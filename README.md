@@ -1,6 +1,6 @@
 # AI API Learning Project
 
-A day-by-day Python project for learning AI APIs — from first API calls and parameter tuning, to tokens, streaming, stop sequences, structured JSON with Pydantic validation, multi-turn chat memory strategies, and chain-of-thought prompting.
+A day-by-day Python project for learning AI APIs — from first API calls and parameter tuning, to tokens, streaming, stop sequences, structured JSON with Pydantic validation, multi-turn chat memory strategies, chain-of-thought prompting, and building tool-using agents with dispatchers and structured logging.
 
 **Primary provider:** Groq (free tier) · **Model:** `llama-3.3-70b-versatile`
 
@@ -20,6 +20,13 @@ day01/
 ├── Day_3_pedantic_validation_and_retry.py # Pydantic validation with retries
 ├── Day_4_multiturn_conversational_loop.py # Multi-turn chat with memory strategies
 ├── Day_5_chain_of_thought_(COT).py      # Chain-of-thought prompting experiment
+├── Day_8_tools_as_Json_schemas.py       # First tool-use loop (JSON schemas)
+├── Day_9_tool_use_loop.py               # Multi-tool agent loop (calculator, time, jokes)
+├── Day_10_tool_use_simulteniously.py    # Simultaneous multi-tool calls + web search
+├── Day_11_tool_use_read_write.py        # Context Q&A with web search fallback
+├── day_12_logger_and_dispatcher.py      # Tool dispatcher registry + structured logging
+├── all_tool_definition.py               # Shared tool JSON schemas
+├── sandbox/                             # Local files for read/write demos (todo.txt, etc.)
 ├── requirements.txt
 ├── .env                                 # API keys (create locally — not committed)
 ├── .gitignore
@@ -65,8 +72,9 @@ pip install -r requirements.txt
 
 | Package         | Purpose                              | Used from   |
 |-----------------|--------------------------------------|-------------|
-| `groq`          | Groq API client (primary)            | Day 1–5     |
+| `groq`          | Groq API client (primary)            | Day 1–12    |
 | `python-dotenv` | Load `.env` variables                | All days    |
+| `requests`      | HTTP (web search, jokes, weather)    | Day 9–12    |
 | `tiktoken`      | Token counting                       | Day 2, 4    |
 | `pydantic`      | Schema validation                    | Day 3       |
 | `openai`        | OpenAI API client                    | Day 1       |
@@ -79,8 +87,11 @@ pip install -r requirements.txt
 **Never commit this file.**
 
 ```env
-# Free-tier (recommended — required for Day 1–5 Groq scripts)
+# Free-tier (recommended — required for Day 1–12 Groq scripts)
 GORQ_API_KEY=gsk-your-groq-key-here
+
+# Optional — better web search in Day 10–12 (falls back to DuckDuckGo if unset)
+SERPER_API_KEY=your-serper-key-here
 
 # Optional — paid or quota-limited
 OPENAI_API_KEY=sk-your-openai-key
@@ -425,6 +436,168 @@ python3 Day_5_chain_of_thought_(COT).py --max-tokens 500 -o my_results.json
 
 ---
 
+# Day 8 — Tools as JSON Schemas
+
+**Goals:** Define tools as JSON schemas, run the tool-use loop (`request → tool_use → tool_result → final response`), and execute Python handlers for each tool call.
+
+| File | Command |
+|------|---------|
+| Tool schemas demo | `python3 Day_8_tools_as_Json_schemas.py` |
+
+```bash
+python3 Day_8_tools_as_Json_schemas.py
+python3 Day_8_tools_as_Json_schemas.py --max-rounds 3
+```
+
+**Built-in tools:** `calculator`, `get_weather`, `search_web` (mock)
+
+**Flow:**
+
+```
+User message → Groq picks tool → execute_tool() → role=tool result → Groq final answer
+```
+
+**Key concepts:**
+
+- Tool schemas are passed in the `tools=` parameter to Groq
+- Each tool call returns a string in a `role: "tool"` message
+- Multi-round loop until the model responds with text only
+
+---
+
+# Day 9 — Tool-Use Agent Loop
+
+**Goals:** Expand the agent with multiple real tools and a while-loop that keeps calling Groq until `finish_reason == "stop"`.
+
+| File | Command |
+|------|---------|
+| Multi-tool loop | `python3 Day_9_tool_use_loop.py` |
+
+```bash
+python3 Day_9_tool_use_loop.py
+```
+
+**Tools:** `calculator`, `get_current_time`, `fetch_joke`
+
+**Flow:**
+
+```
+while not done:
+    response = Groq(messages + tools)
+    if tool_calls → execute each → append tool results → continue
+    if stop → return final answer
+```
+
+Edit the hard-coded `query` at the bottom of the script to test different prompts.
+
+---
+
+# Day 10 — Simultaneous Tool Use
+
+**Goals:** Handle multiple tool calls in a single model response, run real web search, and study Groq `tool_choice` modes.
+
+| File | Command |
+|------|---------|
+| Multi-tool + search | `python3 Day_10_tool_use_simulteniously.py` |
+
+```bash
+python3 Day_10_tool_use_simulteniously.py
+python3 Day_10_tool_use_simulteniously.py --tool-choice required
+python3 Day_10_tool_use_simulteniously.py --force-tool calculator
+```
+
+| Flag | Description |
+|------|-------------|
+| `-q`, `--question` | User question (default triggers calculator + time + search) |
+| `--tool-choice` | `auto`, `none`, or `required` |
+| `--force-tool` | Force a specific tool (`calculator`, `get_current_time`, `search_web`) |
+| `--max-rounds` | Max tool rounds (default: 5) |
+
+**Tools:** `calculator`, `get_current_time`, `search_web`
+
+**Web search providers:**
+
+| Provider | Key | Notes |
+|----------|-----|-------|
+| Serper | `SERPER_API_KEY` | Google results (optional) |
+| DuckDuckGo | None | Free fallback |
+
+**Class:** `ExecuteTool` — reusable tool executor used by later days.
+
+---
+
+# Day 11 — Context Q&A with Web Search Fallback
+
+**Goals:** Load local sandbox files into context, answer from context when possible, and fall back to `search_web` only when needed.
+
+| File | Command |
+|------|---------|
+| Context + search | `python3 Day_11_tool_use_read_write.py -q "Your question"` |
+
+```bash
+python3 Day_11_tool_use_read_write.py -q "How to learn and develop an AI agent?"
+```
+
+**Context files** (in `sandbox/`): `todo.txt`, `Health_benifits.md`
+
+**Flow:**
+
+1. Load file contents into the system prompt
+2. Groq checks context → answer directly if found
+3. If not found → call `search_web`
+4. Return final answer using context or search results
+
+| Flag | Description |
+|------|-------------|
+| `-q`, `--question` | Question to ask (required) |
+
+---
+
+# Day 12 — Tool Dispatcher & Structured Logging
+
+**Goals:** Replace hard-coded tool routing with a generic dispatcher (registry dict → Python functions) and log every tool call to a structured JSON-lines file.
+
+| File | Command |
+|------|---------|
+| Dispatcher + logging | `python3 day_12_logger_and_dispatcher.py -q "Your question"` |
+
+```bash
+python3 day_12_logger_and_dispatcher.py -q "How to learn and develop an AI agent?"
+```
+
+Same context-first Q&A flow as Day 11, with two additions:
+
+**1. `ToolDispatcher` + `TOOL_REGISTRY`**
+
+```python
+TOOL_REGISTRY = {
+    "search_web": _search_web_handler,
+}
+dispatcher.dispatch("search_web", {"query": "..."})
+```
+
+**2. `StructuredToolLogger`**
+
+Writes one JSON object per line to `sandbox/tool_calls.log`:
+
+```json
+{
+  "timestamp": "2026-07-18T12:34:56+00:00",
+  "event": "tool_call",
+  "tool": "search_web",
+  "arguments": {"query": "..."},
+  "result": "..."
+}
+```
+
+| Flag | Description |
+|------|-------------|
+| `-q`, `--question` | Question to ask (required) |
+
+**Shared module:** `all_tool_definition.py` — central tool JSON schemas for calculator, time, search, file read/write.
+
+---
+
 ## Suggested Learning Path
 
 ```
@@ -447,6 +620,21 @@ Day 4  →  Multi-turn chat & memory management
 
 Day 5  →  Chain-of-thought prompting
          Day_5_chain_of_thought_(COT).py
+
+Day 8  →  Tools as JSON schemas
+         Day_8_tools_as_Json_schemas.py
+
+Day 9  →  Multi-tool agent loop
+         Day_9_tool_use_loop.py
+
+Day 10 →  Simultaneous tools + web search
+         Day_10_tool_use_simulteniously.py
+
+Day 11 →  Context files + search fallback
+         Day_11_tool_use_read_write.py -q "Your question"
+
+Day 12 →  Dispatcher registry + structured logging
+         day_12_logger_and_dispatcher.py -q "Your question"
 ```
 
 **Run all Groq scripts in order:**
@@ -461,6 +649,11 @@ python3 Day_3_json_formatted_response.py
 python3 Day_3_pedantic_validation_and_retry.py
 python3 Day_4_multiturn_conversational_loop.py token    # interactive — type exit to quit
 python3 Day_5_chain_of_thought_(COT).py
+python3 Day_8_tools_as_Json_schemas.py
+python3 Day_9_tool_use_loop.py
+python3 Day_10_tool_use_simulteniously.py
+python3 Day_11_tool_use_read_write.py -q "How to learn and develop an AI agent?"
+python3 day_12_logger_and_dispatcher.py -q "How to learn and develop an AI agent?"
 ```
 
 ---
@@ -506,6 +699,18 @@ Free quota used up. Wait for reset or use Groq.
 
 Generated by default when running the CoT experiment. Add to `.gitignore` if you do not want to commit experiment output.
 
+### `tool_use_failed` from Groq (Day 8–12)
+
+Groq sometimes rejects malformed tool output. Day 10–12 retry with backoff; Day 11/12 also recover parsed tool calls from the error payload when possible. Re-run the script or simplify the question if retries fail.
+
+### Web search returns no results (Day 10–12)
+
+DuckDuckGo HTML parsing can be flaky. Set `SERPER_API_KEY` in `.env` for more reliable results, or try a different query.
+
+### Day 12 writes `sandbox/tool_calls.log`
+
+Append-only JSON-lines log of every tool dispatch. Safe to delete between runs; it is recreated automatically.
+
 ---
 
 ## Security Notes
@@ -523,6 +728,7 @@ Core packages from `requirements.txt`:
 
 ```
 groq==1.5.0
+requests==2.34.2
 tiktoken==0.13.0
 pydantic==2.13.4
 python-dotenv==1.2.2
